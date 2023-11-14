@@ -1,25 +1,46 @@
-cmake_minimum_required(VERSION 2.8.3)
+cmake_minimum_required(VERSION 3.5)
 project(knowrob_ameva)
 
-find_package(catkin REQUIRED roscpp std_msgs)
-find_package (Threads)
+# Default to C99
+if(NOT CMAKE_C_STANDARD)
+  set(CMAKE_C_STANDARD 99)
+endif()
+
+# Default to C++17
+if(NOT CMAKE_CXX_STANDARD)
+  set(CMAKE_CXX_STANDARD 17)
+endif()
+
+if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  add_compile_options(-Wall -Wextra -Wpedantic)
+endif()
+
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+
+find_package(ament_cmake REQUIRED)
+find_package(ament_index_cpp REQUIRED)
+find_package(rcl REQUIRED)
+find_package(rclcpp REQUIRED)
+
 find_package(PkgConfig)
+find_package(Threads)
 find_package(Protobuf REQUIRED)
 
-pkg_check_modules(SWIPL REQUIRED swipl)
-link_directories(${SWIPL_LIBRARY_DIRS})
-message(STATUS "SWIPL found.")
+find_package(SWIPL REQUIRED)
+if(NOT SWIPL_FOUND)
+  message( FATAL_ERROR "SWIPL not found." )
+endif()
 
-pkg_check_modules(PROTOBUF REQUIRED protobuf)
-link_directories(${PROTOBUF_LIBRARY_DIRS})
-message(STATUS "PROTOBUF found.")
+if(NOT PROTOBUF_FOUND)
+  message( FATAL_ERROR "PROTOBUF not found.")
+endif()
 
 pkg_check_modules(LIBWEBSOCKETS REQUIRED libwebsockets)
-link_directories(${LIBWEBSOCKETS_LIBRARY_DIRS})
-message(STATUS "LIBWEBSOCKETS found.")
+# link_directories(${LIBWEBSOCKETS_LIBRARY_DIRS})
+message( STATUS "LIBWEBSOCKETS found.")
 
 pkg_check_modules(CURLPP REQUIRED curlpp)
-link_directories(${CURLPP_LIBRARY_DIRS})
+# link_directories(${CURLPP_LIBRARY_DIRS})
 message(STATUS "LIBWEBSOCKETS found.")
 
 set(proto_dir ${PROJECT_SOURCE_DIR}/src/proto)
@@ -28,20 +49,9 @@ message(STATUS "Proto Source Dir: ${proto_dir}")
 message(STATUS "Proto Source Files: ${proto_files}")
 
 # Set up destination directories
-catkin_destinations()
-set(proto_gen_cpp_dir ${CATKIN_DEVEL_PREFIX}/${CATKIN_PACKAGE_INCLUDE_DESTINATION})
+set(proto_gen_cpp_dir build/${PROJECT_NAME}/include)
 file(MAKE_DIRECTORY ${proto_gen_cpp_dir})
-set(protogen_include_dirs ${proto_gen_cpp_dir}/../)
-message(STATUS "Proto Include Dirs: ${protogen_include_dirs}")
 message(STATUS "Proto Gen Dirs:${proto_gen_cpp_dir}")
-
-catkin_package(
-  DEPENDS
-   roscpp
-  INCLUDE_DIRS ${protogen_include_dirs}
-  LIBRARIES knowrob_ameva knowrob_ameva_proto 
-)
-
 
 # Create lists of files to be generated.
 set(proto_gen_cpp_files "")
@@ -50,8 +60,16 @@ foreach(proto_file ${proto_files})
     list(APPEND proto_gen_cpp_files ${proto_gen_cpp_dir}/${proto_name}.pb.h ${proto_gen_cpp_dir}/${proto_name}.pb.cc)
 endforeach(proto_file ${proto_files})
 
+# Create lists of generated source files
+set(generated_proto_source "")
+foreach(source_file ${proto_gen_cpp_files})
+    get_filename_component(proto_name ${source_file} NAME_WE)
+    list(APPEND generated_proto_source include/${proto_name}.pb.h include/${proto_name}.pb.cc)
+endforeach(source_file ${proto_gen_cpp_files})
 
-message(STATUS "Proto Gen Files :${proto_gen_cpp_dir}")
+message(STATUS "Proto Gen Files: ${generated_proto_source}")
+
+message(STATUS "Proto Gen dir: ${proto_gen_cpp_dir}")
 # Run protoc and generate language-specific headers.
 add_custom_command(
     OUTPUT ${proto_gen_cpp_files}
@@ -65,17 +83,45 @@ add_custom_target(knowrob_ameva_generate_headers ALL
     DEPENDS ${proto_gen_cpp_files}
 )
 
-# Create proto library for linking.
-include_directories(include ${PROTOBUF_INCLUDE_DIRS})
-add_library(knowrob_ameva_proto 
-  ${proto_gen_cpp_files})
-target_link_libraries(knowrob_ameva_proto ${PROTOBUF_LIBRARIES})
-add_dependencies(knowrob_ameva_proto knowrob_ameva_generate_headers)
+set_source_files_properties(${generated_proto_source} PROPERTIES GENERATED TRUE)
 
-include_directories(include ${SWIPL_INCLUDE_DIRS} ${LIBWEBSOCKETS_INCLUDE_DIRS} ${catkin_INCLUDE_DIRS} ${proto_gen_cpp_dir} ${CURLPP_INCLUDE_DIRS})
+# Create proto library for linking.
+add_library(knowrob_ameva_proto SHARED ${generated_proto_source})
+add_dependencies(knowrob_ameva_proto knowrob_ameva_generate_headers)
+target_include_directories(knowrob_ameva_proto PUBLIC ${PROTOBUF_INCLUDE_DIRS})
+target_link_libraries(knowrob_ameva_proto ${PROTOBUF_LIBRARIES})
+ament_target_dependencies(knowrob_ameva_proto 
+  rcl
+  rclcpp
+)
 
 add_library(knowrob_ameva SHARED 
-    src/ue_ws_conn.cpp src/ue_viz.cpp src/ue_control.cpp src/ag_conn.cpp src/kr_ws_server.cpp
-    )
-target_link_libraries(knowrob_ameva  knowrob_ameva_proto ${LIBWEBSOCKETS_LIBRARIES} ${SWIPL_LIBRARIES} ${catkin_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT} ${CURLPP_LIBRARIES})
-add_dependencies(${PROJECT_NAME} ${PROJECT_NAME}_proto)
+    src/ue_ws_conn.cpp 
+    src/ue_viz.cpp 
+    src/ue_control.cpp 
+    src/ag_conn.cpp 
+    src/kr_ws_server.cpp
+)
+target_include_directories(${PROJECT_NAME} PUBLIC ${SWIPL_INCLUDE_DIRS} ${LIBWEBSOCKETS_INCLUDE_DIRS} ${proto_gen_cpp_dir} ${CURLPP_INCLUDE_DIRS} include/${PROJECT_NAME})
+target_link_libraries(${PROJECT_NAME} knowrob_ameva_proto ${rcl_LIBRARIES} ${rclcpp_LIBRARIES} ${LIBWEBSOCKETS_LIBRARIES} ${SWIPL_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT} ${CURLPP_LIBRARIES})
+add_dependencies(${PROJECT_NAME} knowrob_ameva_proto)
+ament_target_dependencies(${PROJECT_NAME}
+  rcl
+  rclcpp
+)
+
+install(TARGETS knowrob_ameva
+  DESTINATION lib/${PROJECT_NAME})
+install(TARGETS knowrob_ameva_proto
+  DESTINATION lib/${PROJECT_NAME})
+
+install(
+  DIRECTORY include
+  DESTINATION include/${PROJECT_NAME}
+)
+install(
+  PROGRAMS ${SWIPL_LIBRARIES}
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+ament_package()

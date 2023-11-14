@@ -9,6 +9,10 @@
 
 * sudo apt install libcurlpp-dev
 * [cloudsim_k8s_launcher](https://github.com/robcog-iai/cloudsim_k8s_launcher)
+
+### 22.04
+
+* sudo apt install libwebsockets-dev
  
 ## Usage
 
